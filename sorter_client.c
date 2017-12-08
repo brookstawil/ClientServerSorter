@@ -27,9 +27,8 @@ pthread_t* threadIds;
 char *global_output_dir;
 char *global_starting_dir;
 char *global_column_to_sort;
-char * server;
-int portno;
-char * server;
+char *serverAddress;
+int portNum;
 
 int main (int argc, char* argv[]) {
 
@@ -84,31 +83,12 @@ int main (int argc, char* argv[]) {
 	return 0;
 }
 
-//Helper function that sets the arguments for a thread that sorts a given file
-args_sortFile * createThreadsSort(char* pathname, char* d_name, FILE* csvFile, char* output_dir, char* directory_path,int counter){
-	args_sortFile *sortFileArgs = calloc(1, sizeof(args_sortFile));
-	sortFileArgs->pathName = pathname;
-	sortFileArgs->directoryName = d_name;
-	sortFileArgs->csvFile = csvFile;
-	sortFileArgs->directory_path = directory_path;
-	sortFileArgs->output_dir = output_dir;
-	sortFileArgs->counter = counter;
-	return sortFileArgs;
+//A sendFileData thread will have the socket file descriptor (and other information?) passed in an arguments struct
+void* sendFileData(void* args) {
+
 }
 
-args_travelDirectory * createThreadsTraverse(char * output_dir, int counter, pthread_t* threadHolder, DIR * directory, char *directory_path){
-	args_travelDirectory* travelDirectoryArgs = (args_travelDirectory *)malloc(sizeof(args_travelDirectory));
-	travelDirectoryArgs->output_dir = output_dir;
-	travelDirectoryArgs->counter = counter;
-	travelDirectoryArgs->threadHolder = threadHolder;
-	travelDirectoryArgs->directory = directory;
-	travelDirectoryArgs->directory_path = directory_path;
-
-	return travelDirectoryArgs;
-}
-
-int createSocketforCSV(void *args){
-	args_sortFile* sortFileArgs = args;
+int createSocket(const char * server, const char * port){
 	int	sd;
 	struct addrinfo	addrinfo;
 	struct addrinfo *result;
@@ -149,14 +129,6 @@ int createSocketforCSV(void *args){
 		freeaddrinfo( result );
 		return -1;
 	}
-
-	//im assuming that once we connect we have to get the data and then write the Rows to the server
-	Row **tempRows = malloc(sizeof(struct Row*) * NUM_ROWS);
-	sortnew(tempRows, sortFileArgs->csvFile, global_column_to_sort);
-	
-	push(StackOfSortedFiles, tempRows);
-
-	pthread_exit(NULL);
 }
 
 //open the directory and create threadholder
@@ -215,11 +187,13 @@ void goThroughPath(void* args){
 				//need to EXTEND THE PATH for next travdir call, working dir doesn't change (think adir/ -> adir/bdir/....)
 				int pathlength = 0;	
 				char path[MAX_PATH_LENGTH];
+				
 				pathlength = snprintf(path, MAX_PATH_LENGTH, "%s/%s",currEntry, d_name);
 				if(pathlength > MAX_PATH_LENGTH-1) {
 					printf("ERROR: Path length is too long");
 					return;
 				}
+
 				char * newDirectoryPath = (char *)malloc(strlen(directory_path) + strlen(d_name) + 2);
 				strcpy(newDirectoryPath, directory_path);
 
@@ -236,6 +210,7 @@ void goThroughPath(void* args){
 						}
 					}
 				}
+
 				//We have found a new directory and must thus make a new thread for it.
 				//This requires updating the counter of the parent directory, as well as adding the thread to the threadholder
 				pthread_t thread;
@@ -244,7 +219,7 @@ void goThroughPath(void* args){
 			}
 		} 
 		else if(currEntry->d_type == DT_REG) { 	//regular files, need to check to ensure ".csv"
-			//need a for loop to go through the directory to get all csvs - pointer and travdir once at the end of the list of csvs in that one dir	
+
 			char pathname [256];
 			FILE* csvFile;
 			sprintf(pathname, "%s/%s", directory_path, d_name);
@@ -252,7 +227,7 @@ void goThroughPath(void* args){
 			//Check to see if the file is a csv
 			char *lastdot = strrchr(d_name, '.');
 
-			if (strcmp(lastdot,".csv") != 0) {
+			if (lastdot == NULL || strcmp(lastdot,".csv") != 0) {
 				printf("File is not a .csv: %s\n", d_name);
 			} else if(isAlreadySorted(pathname, global_column_to_sort)) {
 				printf("File already sorted: %s\n", d_name);
@@ -262,26 +237,58 @@ void goThroughPath(void* args){
 				if (csvFile != NULL) {
 					//pathname has the full path to the file including extension
 					//directory_path has only the parent directories of the file
-					//instead of forking we call the method createThreadsSort
-					pthread_t thread;
-					pthread_create(&thread, 0, createSocketforCSV, createThreadsSort(pathname, d_name, csvFile, output_dir, directory_path, travelDirectoryArgs->counter));
-					travelDirectoryArgs->threadHolder[travelDirectoryArgs->counter++] = thread;
+					//instead of forking we call the method createThreadsTransmit
+
+					/*
+						This is the location where a server connection is made. Are we just sending through a call to getline()? Should we not just let the server pick apart the line? 
+						Or would the client break up the line into the 28 columns and send that?
+						IMO we shouldnt even deal with row allocation, just send them a line with however many bytes it has.
+					*/
+
+					/*
+						The call to createSocket(serverAddress, portNum) will return some file descriptor. 
+						This helper function essentially holds all of the network programming needed to get a socket going.
+						We must obviously check to see if the socket was valid by checking the return value
+					*/
+
+					int* sd;
+					if ( (sd = createSocket( serverAddress, portNum )) == -1 ) {
+						write( 1, message, sprintf( message,  "\x1b[1;31mCould not connect to server %s errno %s\x1b[0m\n", argv[1], strerror( errno ) ) );
+						return 1;
+					} else {
+						//With a valid file descriptor we can then split off into another thread which will deal with parsing the file and writing to the socket.
+						printf( "Connected to server %s\n", serverAddress);
+						fdptr = (int *)malloc(sizeof(int));
+						*fdptr = sd;
+
+						//Once we have the socket file pointer we can create a new thread, call it sendFileData
+						//TODO: create some arg structure for this thread, we need at least the fdptr, what else do we need?
+						pthread_create(&tid, NULL, sendFileData, createThreadsSendFileData(fdptr));
+						pthread_join(tid, NULL);
+						
+						free(fdptr);
+						close(sd);
+						return 1; //Thread on a file returns 1 when finished
+					}
 				}
 			}	
 		} else {
-			printf("not a valid file or directory");
+			printf("ERROR: Not a valid file or directory\n");
 		}	
 	}
 
-	//WAIT FOR THREADS TO FINISH 
+	/*
+		More work needs to be done determining what below here needs to be removed, will continue
+	*/
+
+
+	//Join the directory threads and thus wait for threads created for files to finish 
 	int i=0,j=0;
 	int rowSet1Length=0;
 	int rowSet2Length=0;
 	int totalthreads = travelDirectoryArgs->counter;
 
 	//printf("The thread %u has a count of: %d\n", pthread_self(), totalthreads);
-
-	//calling pthread_self() here only gives the thread id's of the thread for going through directories
 
 	for(i = 0; i < travelDirectoryArgs->counter; i++){
 		pthread_join(travelDirectoryArgs->threadHolder[i], NULL);
@@ -380,6 +387,27 @@ void goThroughPath(void* args){
 	}
 
 	pthread_exit(NULL);
+}
+
+//Helper function that sets the arguments for a thread that transmits a given file 
+args_sendFileData * createThreadsSendFileData(int *fdptr) {
+	args_sendFileData->fdptr = fdptr;
+	args_sendFileData->pathName = pathName;
+	args_sendFileData->directoryName = directoryName;
+	args_sendFileData->csvFile = csvFile;
+	args_sendFileData->directory_path = directory_path;
+	args_sendFileData->counter = counter;
+}
+
+args_travelDirectory * createThreadsTraverse(char * output_dir, int counter, pthread_t* threadHolder, DIR * directory, char *directory_path){
+	args_travelDirectory* travelDirectoryArgs = (args_travelDirectory *)malloc(sizeof(args_travelDirectory));
+	travelDirectoryArgs->output_dir = output_dir;
+	travelDirectoryArgs->counter = counter;
+	travelDirectoryArgs->threadHolder = threadHolder;
+	travelDirectoryArgs->directory = directory;
+	travelDirectoryArgs->directory_path = directory_path;
+
+	return travelDirectoryArgs;
 }
 
 //If it already contains the phrase -sorted-SOMEVALIDCOLUMN.csv then the file is already sorted
