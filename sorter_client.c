@@ -27,20 +27,16 @@ pthread_t* threadIds;
 char *global_output_dir;
 char *global_starting_dir;
 char *global_column_to_sort;
-char *serverAddress;
-int portNum;
+char *global_serverAddress;
+char *global_portNum;
 
 int main (int argc, char* argv[]) {
 
-	int portno = -1;
+	//We want to ensure that only the root thread does certain operations
+	root = getpid();
+	rootTID = pthread_self();
 
-	if ( argc < 7 )
-	{
-		fprintf( stderr, "\x1b[1;31mNo host name specified.  File %s line %d.\x1b[0m\n", __FILE__, __LINE__ );
-		exit( 1 );
-	} 
-
-	char *errorMessage = "The program must specify a column to sort, given by the -c argument check documentation for a list of valid columns.\n";
+	char *errorMessage = "\n";
 	int i; 
 	for (i = 0; i < argc; i++) { 
 		//printf("%s\n", argv[i]); 
@@ -52,20 +48,32 @@ int main (int argc, char* argv[]) {
 		} else if(strcmp(argument,"-o") == 0){
 			global_output_dir = argv[i+1];
 		} else if(strcmp(argument, "-p")==0){
-			portno = atoi(argv[i+1]);
+			global_portNum = argv[i+1];
 		} else if(strcmp(argument, "-h")==0){
-			server = argv[i+1];
+			global_serverAddress = argv[i+1];
 		}
 	}
 
 	/** We now have the IP address and port to connect to on the server, we have to get    **/
 	/**   that information into C's special address struct for connecting sockets    **/
 
+	//Required arguments check
 	if(global_column_to_sort == NULL) {
 		printf("ERROR: No input column specified. Column to sort must be given with argument tag '-c'.\n");
 		exit(0);
 	}
 
+	if(global_serverAddress == NULL) {
+		printf("ERROR: No server address specified. Server address must be given with argument tag '-h'.\n");
+		exit(0);
+	}
+
+	if(global_portNum == NULL) {
+		printf("ERROR: No port number specified. Port number must be given with argument tag '-h'.\n");
+		exit(0);
+	}
+
+	//Optional arguments default behavior
 	if(global_starting_dir == NULL) {
 		printf("Staring directory not specified, defaulting to './' as the global_starting_dir.\n");
 		global_starting_dir = ".";
@@ -83,12 +91,49 @@ int main (int argc, char* argv[]) {
 	return 0;
 }
 
-//A sendFileData thread will have the socket file descriptor (and other information?) passed in an arguments struct
-void* sendFileData(void* args) {
+//A watchConnection thread will also be given the socket file descriptor (and other information?) passed in an arguments struct
+//It will wait for responses on the socket.
+void* watchConnection(void* args) 
+{
+	args_watchConnection* watchConnectionArgs = args;
 
+	int sd;
+	int i;
+	char buffer[512];
+	char output[512];
+
+	sd = *(watchConnectionArgs->fdptr);
+	while( (i = recv( sd, buffer, sizeof(buffer),0) ) != 0 )
+	{
+		sprintf( output, ">%s<\n", buffer );
+		write( 1, output, strlen(output) );
+
+		if(strcmp(buffer,"SOME DISCONNECT SIGNAL")==0)
+		{
+			exit(1);
+		}
+		sleep(1);
+	}
+
+	sprintf( output, "Server disconnected\n" );
+	write( 1, output, strlen(output) );
+	close(sd);
+	exit(1);
 }
 
-int createSocket(const char * server, const char * port){
+//A sendFileData thread will have the socket file descriptor (and other information?) passed in an arguments struct
+void* sendFileData(void* args) 
+{
+	/*
+		We must transmit:
+			1. The size of the line
+			2. The line itself
+			3. Some ending signal once the file is done
+	*/
+}
+
+int createSocket(const char * server, const char * port)
+{
 	int	sd;
 	struct addrinfo	addrinfo;
 	struct addrinfo *result;
@@ -102,7 +147,7 @@ int createSocket(const char * server, const char * port){
 	addrinfo.ai_addr = NULL;
 	addrinfo.ai_canonname = NULL;
 	addrinfo.ai_next = NULL;
-	if ( getaddrinfo(server, portno, &addrinfo, &result ) != 0 )
+	if ( getaddrinfo(server, port, &addrinfo, &result ) != 0 )
 	{
 		fprintf( stderr, "\x1b[1;31mgetaddrinfo( %s ) failed.  File %s line %d.\x1b[0m\n", server, __FILE__, __LINE__ );
 		return -1;
@@ -155,7 +200,8 @@ int travdir(const char * input_dir_path, char* column_to_sort, const char * outp
 	
 //Function pointer to go through the directory path and finds csvs.
 //Arguments are set without a helper are are set in this function
-void goThroughPath(void* args){
+void goThroughPath(void* args)
+{
 	args_travelDirectory* travelDirectoryArgs = args;
 	DIR* directory = travelDirectoryArgs->directory;
 	char* directory_path = travelDirectoryArgs->directory_path;
@@ -165,7 +211,8 @@ void goThroughPath(void* args){
 	counterofthreads++;
 
 	//while we go through the directory -> in the parent process keep looking for csv files
-	while(directory != NULL) {
+	while(directory != NULL) 
+	{
 		struct dirent * currEntry;
 		char * d_name;
 		currEntry = readdir(directory);
@@ -182,7 +229,8 @@ void goThroughPath(void* args){
 		d_name = currEntry->d_name;
 
 		//this is a directory 
-		if(currEntry->d_type==DT_DIR) {
+		if(currEntry->d_type==DT_DIR) 
+		{
 			if(strcmp(d_name,".") != 0 && strcmp(d_name, "..") != 0) {
 				//need to EXTEND THE PATH for next travdir call, working dir doesn't change (think adir/ -> adir/bdir/....)
 				int pathlength = 0;	
@@ -218,7 +266,8 @@ void goThroughPath(void* args){
 				travelDirectoryArgs->threadHolder[travelDirectoryArgs->counter++] = thread;
 			}
 		} 
-		else if(currEntry->d_type == DT_REG) { 	//regular files, need to check to ensure ".csv"
+		else if(currEntry->d_type == DT_REG) 
+		{ 	//regular files, need to check to ensure ".csv"
 
 			char pathname [256];
 			FILE* csvFile;
@@ -237,18 +286,20 @@ void goThroughPath(void* args){
 				if (csvFile != NULL) {
 					//pathname has the full path to the file including extension
 					//directory_path has only the parent directories of the file
-					//instead of forking we call the method createThreadsTransmit
 
 					/*
-						This is the location where a server connection is made. Are we just sending through a call to getline()? Should we not just let the server pick apart the line? 
-						Or would the client break up the line into the 28 columns and send that?
-						IMO we shouldnt even deal with row allocation, just send them a line with however many bytes it has.
-					*/
-
-					/*
+						This is the location where a server connection is made. 
 						The call to createSocket(serverAddress, portNum) will return some file descriptor. 
 						This helper function essentially holds all of the network programming needed to get a socket going.
 						We must obviously check to see if the socket was valid by checking the return value
+					*/
+
+					/*
+						We must transmit:
+							1. The size of the line
+							2. The line itself
+							3. Some ending signal once the file is done
+						This is to be implemented in the sendFileData() thread function described above.
 					*/
 
 					int* sd;
@@ -263,8 +314,21 @@ void goThroughPath(void* args){
 
 						//Once we have the socket file pointer we can create a new thread, call it sendFileData
 						//TODO: create some arg structure for this thread, we need at least the fdptr, what else do we need?
-						pthread_create(&tid, NULL, sendFileData, createThreadsSendFileData(fdptr));
-						pthread_join(tid, NULL);
+						pthread_t sendFileData_thread, watchConnection_thread;
+						pthread_create(&sendFileData_thread, NULL, sendFileData, createThreadsSendFileData(fdptr, ));
+						//We must also spawn a watchConnection thread which will wait for the server to respond
+						pthread_create(&watchConnection_thread, NULL, watchConnection, createThreadsWatchConnection(fdptr, ))
+
+						/*
+							In this implementation the client will join connection threads just after creation. 
+							Meaning that traversing to the next file in the directory will not happen until the file has been sent.
+							Do we need to join or can we just let these threads run?
+							This is going based off the decription that Tjang gave in the assignment page.
+						*/
+
+						pthread_join(sendFileData_thread, NULL);
+						pthread_join(watchConnection_thread, NULL);
+
 						
 						free(fdptr);
 						close(sd);
@@ -278,27 +342,31 @@ void goThroughPath(void* args){
 	}
 
 	/*
-		More work needs to be done determining what below here needs to be removed, will continue
+		At this point all of the files have their data being sent. 
+		We first must join all of the directory threads before we make a final request for the sorted files.
 	*/
 
-
-	//Join the directory threads and thus wait for threads created for files to finish 
+	//Join the directory threads  to finish 
 	int i=0,j=0;
-	int rowSet1Length=0;
-	int rowSet2Length=0;
-	int totalthreads = travelDirectoryArgs->counter;
-
-	//printf("The thread %u has a count of: %d\n", pthread_self(), totalthreads);
-
 	for(i = 0; i < travelDirectoryArgs->counter; i++){
 		pthread_join(travelDirectoryArgs->threadHolder[i], NULL);
 	}
 
 	free(travelDirectoryArgs->directory);
 
+
+	/*	
+		At this point in execution any given directory thread should have finished with its children.
+		Only the root thread should be requesting for the sorted files, otherwise let the individual directory threads exit.
+	*/
+
+
 	//Anything that occurs in this conditional will only be done by the root thread
-	//TODO: Parallelize poping from the stack
-	if(getpid() == root && pthread_self() == rootTID){
+	if(getpid() == root && pthread_self() == rootTID)
+	{
+		int rowSet1Length=0;
+		int rowSet2Length=0;
+		int totalthreads = travelDirectoryArgs->counter;
 
 		printf("TIDS of all child threads: ");
 		for(i = 0; i < counterofthreads; i++){
@@ -391,12 +459,15 @@ void goThroughPath(void* args){
 
 //Helper function that sets the arguments for a thread that transmits a given file 
 args_sendFileData * createThreadsSendFileData(int *fdptr) {
+	args_sendFileData* sendFileDataArgs = (args_sendFileData *)malloc(sizeof(args_sendFileData));
 	args_sendFileData->fdptr = fdptr;
 	args_sendFileData->pathName = pathName;
 	args_sendFileData->directoryName = directoryName;
 	args_sendFileData->csvFile = csvFile;
 	args_sendFileData->directory_path = directory_path;
 	args_sendFileData->counter = counter;
+
+	return sendFileDataArgs;
 }
 
 args_travelDirectory * createThreadsTraverse(char * output_dir, int counter, pthread_t* threadHolder, DIR * directory, char *directory_path){
@@ -408,6 +479,13 @@ args_travelDirectory * createThreadsTraverse(char * output_dir, int counter, pth
 	travelDirectoryArgs->directory_path = directory_path;
 
 	return travelDirectoryArgs;
+}
+
+args_watchConnection * createThreadsWatchConnection(int *fdptr, ) {
+	args_watchConnection watchConnectionArgs = (args_watchConnection *)malloc(sizeof(args_watchConnection));
+	watchConnectionArgs->fdptr = fdptr;
+
+	return watchConnectionArgs;
 }
 
 //If it already contains the phrase -sorted-SOMEVALIDCOLUMN.csv then the file is already sorted

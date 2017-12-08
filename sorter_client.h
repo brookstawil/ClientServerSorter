@@ -33,6 +33,7 @@ typedef struct threadArg{
 } args_sortFile;
 */
 
+//arguments for sending file data across some socket file descriptor
 typedef struct threadArg{
     int* fdptr;
     char* pathName;
@@ -59,6 +60,11 @@ typedef struct threadArg3{
     Row ** row1;
     Row ** row2;
 } args_sortedRowStackPop;
+
+//arguments for a thread that watches the connection on some socket
+typedef struct threadArg4{
+    int* fdptr;
+} args_watchConnection;
 
 int travdir(const char * input_dir_path, char* column_to_sort, const char * output_dir);
 void createSocket(void* margs);
