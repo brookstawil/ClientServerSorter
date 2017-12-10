@@ -16,19 +16,19 @@
 #include "stack.c"
 
 #define MAX_PATH_LENGTH 256
+#define DISCONNECT_SIGNAL "<END>"
 
 //the root is now an initial thread process
 pid_t root;
 pthread_t rootTID;
 stack_safe *StackOfSortedFiles;
-int numRows2;
 int counterofthreads;
-pthread_t* threadIds;
 char *global_output_dir;
 char *global_starting_dir;
 char *global_column_to_sort;
 char *global_serverAddress;
 char *global_portNum;
+sem_t client_pool;
 
 int main (int argc, char* argv[]) {
 
@@ -37,7 +37,7 @@ int main (int argc, char* argv[]) {
 	rootTID = pthread_self();
 
 	char *errorMessage = "\n";
-	int i; 
+	int i,semaphore_size; 
 	for (i = 0; i < argc; i++) { 
 		//printf("%s\n", argv[i]); 
 		char* argument = argv[i];
@@ -51,6 +51,8 @@ int main (int argc, char* argv[]) {
 			global_portNum = argv[i+1];
 		} else if(strcmp(argument, "-h")==0){
 			global_serverAddress = argv[i+1];
+		} else if(strcmp(argument, "-s"){
+			semaphore_size = atoi(argv[i+1]);
 		}
 	}
 
@@ -84,6 +86,12 @@ int main (int argc, char* argv[]) {
 		global_output_dir = "."; //Will either be a valid global_starting_dir or ./ at this point in code
 	}
 
+	if(semaphore_size == NULL) {
+		printf("Client socket pool amount is not specified, defaulting to '10' as the semaphore_size.\n");
+		semaphore_size = 10;
+	}
+
+	sem_init(&mutex, 0, semaphore_size);
 	StackOfSortedFiles = stack_create(30);
 
 	travdir(global_starting_dir, global_column_to_sort, global_output_dir);	
@@ -99,16 +107,17 @@ void* watchConnection(void* args)
 
 	int sd;
 	int i;
-	char buffer[512];
-	char output[512];
+	char buffer[256];
+	char output[256];
 
 	sd = *(watchConnectionArgs->fdptr);
 	while( (i = recv( sd, buffer, sizeof(buffer),0) ) != 0 )
 	{
+		//These two lines simply write what was being recieved to STDOUT
 		sprintf( output, ">%s<\n", buffer );
 		write( 1, output, strlen(output) );
 
-		if(strcmp(buffer,"SOME DISCONNECT SIGNAL")==0)
+		if(strcmp(buffer,DISCONNECT_SIGNAL)==0)
 		{
 			exit(1);
 		}
@@ -124,12 +133,65 @@ void* watchConnection(void* args)
 //A sendFileData thread will have the socket file descriptor (and other information?) passed in an arguments struct
 void* sendFileData(void* args) 
 {
+	args_sendFileData* sendFileDataArgs = args;
 	/*
 		We must transmit:
 			1. The size of the line
 			2. The line itself
 			3. Some ending signal once the file is done
 	*/
+}
+
+//The recieveFileData thread works very much like the watchConnection thread implemented above.
+//However instead of just waiting for a terminating string, the thread also takes data given back from the server.
+void* receiveFileData(void* args) {
+	args_receiveFileData* receiveFileData = args;
+
+	/*
+		This is essentially the reverse of what the server side is doing.
+		The server should be sending lines over the socket, while the client reads in and interprets the bytes.
+	*/
+
+	int sd;
+	int i;
+	char buffer[1024];
+	char output[1024];
+
+	sd = *(receiveFileData->fdptr);
+	while( (i = recv( sd, buffer, sizeof(buffer),0) ) != 0 )
+	{	
+		//These two lines simply write what was being recieved to STDOUT
+		sprintf( output, ">%s<\n", buffer );
+		write( 1, output, strlen(output) );
+
+		if(strcmp(buffer, DISCONNECT_SIGNAL)==0)
+		{
+			exit(1);
+		}
+		else
+		{
+			
+			/*
+				Here the code to read in the line from the server should be made.
+				The lines recieved from the server will then be written to some file.
+				No need to put them into Row** as we are just getting proper lines, so we can just write to the file directly.
+			*/	
+			
+			//receiveFileData->csvFileOut is now a file pointer on the client that can be written to.
+			
+
+
+		}
+		//Not sleeping on the this recv may result in the client exiting early 
+		//TODO: check to see if there is a way to wait for less than 1 second, or rework the looping structure
+		//sleep(1);
+	}
+
+	sprintf( output, "Server disconnected\n" );
+	write( 1, output, strlen(output) );
+	close(sd);
+	exit(1);
+
 }
 
 int createSocket(const char * server, const char * port)
@@ -147,6 +209,7 @@ int createSocket(const char * server, const char * port)
 	addrinfo.ai_addr = NULL;
 	addrinfo.ai_canonname = NULL;
 	addrinfo.ai_next = NULL;
+
 	if ( getaddrinfo(server, port, &addrinfo, &result ) != 0 )
 	{
 		fprintf( stderr, "\x1b[1;31mgetaddrinfo( %s ) failed.  File %s line %d.\x1b[0m\n", server, __FILE__, __LINE__ );
@@ -179,7 +242,6 @@ int createSocket(const char * server, const char * port)
 //open the directory and create threadholder
 int travdir(const char * input_dir_path, char* column_to_sort, const char * output_dir)
 {
-	numRows2 = 0;
 	char *directory_path = (char *) malloc(MAX_PATH_LENGTH);
 	strcpy(directory_path, input_dir_path);
 	
@@ -221,7 +283,7 @@ void goThroughPath(void* args)
 		if(travelDirectoryArgs->counter == 256){
 			break;
 		}
-		//end of file stream, break-> now wait for children and children's children
+		//end of file stream, break->now wait on children
 		if(!currEntry) {
 			break;
 		}
@@ -262,7 +324,10 @@ void goThroughPath(void* args)
 				//We have found a new directory and must thus make a new thread for it.
 				//This requires updating the counter of the parent directory, as well as adding the thread to the threadholder
 				pthread_t thread;
-				pthread_create(&thread, 0, goThroughPath, createThreadsTraverse(output_dir, 0, threadHolder, newDirectory, newDirectoryPath));
+				if(pthread_create(&thread, 0, goThroughPath, createThreadsTraverse(output_dir, 0, threadHolder, newDirectory, newDirectoryPath) != 0)){
+					printf( "pthread_create() failed in file %s line %d\n", __FILE__, __LINE__ );
+					return 0;
+				}
 				travelDirectoryArgs->threadHolder[travelDirectoryArgs->counter++] = thread;
 			}
 		} 
@@ -302,9 +367,18 @@ void goThroughPath(void* args)
 						This is to be implemented in the sendFileData() thread function described above.
 					*/
 
+					/*
+						If we want to accomplish the first extra credit, we would create some semaphore in main, using the -s parameter.
+						And ANYWHERE we call createSockte, we look at this semaphore to check and see whether we have already made a certain number of connections.
+						Most likely we would check the semaphore here and then call this conditional just below.
+						sem_wait() here and then sem_post() after closing the socket with close(sd)
+					*/
+
+					sem_wait(&client_pool);
+
 					int* sd;
 					if ( (sd = createSocket( serverAddress, portNum )) == -1 ) {
-						write( 1, message, sprintf( message,  "\x1b[1;31mCould not connect to server %s errno %s\x1b[0m\n", argv[1], strerror( errno ) ) );
+						write( 1, message, sprintf( message,  "\x1b[1;31mCould not connect to server %s errno %s\x1b[0m\n", global_serverAddress, strerror( errno ) ) );
 						return 1;
 					} else {
 						//With a valid file descriptor we can then split off into another thread which will deal with parsing the file and writing to the socket.
@@ -315,9 +389,15 @@ void goThroughPath(void* args)
 						//Once we have the socket file pointer we can create a new thread, call it sendFileData
 						//TODO: create some arg structure for this thread, we need at least the fdptr, what else do we need?
 						pthread_t sendFileData_thread, watchConnection_thread;
-						pthread_create(&sendFileData_thread, NULL, sendFileData, createThreadsSendFileData(fdptr, ));
+						if(pthread_create(&sendFileData_thread, NULL, sendFileData, createThreadsSendFileData(fdptr)) != 0){
+							printf( "pthread_create() failed in file %s line %d\n", __FILE__, __LINE__ );
+							return 0;
+						}
 						//We must also spawn a watchConnection thread which will wait for the server to respond
-						pthread_create(&watchConnection_thread, NULL, watchConnection, createThreadsWatchConnection(fdptr, ))
+						if(pthread_create(&watchConnection_thread, NULL, watchConnection, createThreadsWatchConnection(fdptr)) != 0){
+							printf( "pthread_create() failed in file %s line %d\n", __FILE__, __LINE__ );
+							return 0;
+						}
 
 						/*
 							In this implementation the client will join connection threads just after creation. 
@@ -329,10 +409,17 @@ void goThroughPath(void* args)
 						pthread_join(sendFileData_thread, NULL);
 						pthread_join(watchConnection_thread, NULL);
 
-						
+						sendFileData_thread = NULL;
+						watchConnection_thread = NULL;
+
 						free(fdptr);
 						close(sd);
-						return 1; //Thread on a file returns 1 when finished
+						/*
+							sem_post() would be called here
+						*/
+
+						sem_post(&client_pool);
+						return 1; 
 					}
 				}
 			}	
@@ -361,9 +448,56 @@ void goThroughPath(void* args)
 	*/
 
 
-	//Anything that occurs in this conditional will only be done by the root thread
+	//Anything that occurs in this conditional will only be done by the root thread, otherwise the individual directory threads will skip this and exit.
 	if(getpid() == root && pthread_self() == rootTID)
 	{
+
+		/*
+			If we wish to implement the extra credit then we would do as we did above and sem_wait().
+			sem_post would occur below.
+			We do this as we are attempting to create a socket again over here, and thus need to check if we still have socket counter left in the pool.
+		*/
+
+		sem_wait(&client_pool);
+
+		int* sd;
+		if ( (sd = createSocket( serverAddress, portNum )) == -1 ) {
+			write( 1, message, sprintf( message,  "\x1b[1;31mCould not connect to server %s errno %s\x1b[0m\n", global_serverAddress, strerror( errno ) ) );
+			return 1;
+		} else {
+			
+			//First we must create a local FILE pointer to write the output to
+			if(*global_output_dir=='.'){
+				finalDirectoryPath = (char *)calloc(1, strlen(global_output_dir) + sizeof("/AllFiles-sorted-") + sizeof(global_column_to_sort) + sizeof(".csv") + 5);
+				strcat(finalDirectoryPath, global_output_dir);
+			}
+
+			if(finalDirectoryPath[strlen(finalDirectoryPath) - 1] == '/') {
+				strcat(finalDirectoryPath,"AllFiles-sorted-");
+			} else {
+				strcat(finalDirectoryPath,"/AllFiles-sorted-");
+			}
+
+			strcat(finalDirectoryPath, global_column_to_sort);
+			strcat(finalDirectoryPath,".csv");
+
+			FILE *csvFileOut = fopen(finalDirectoryPath,"w");
+			
+			//We now pass this FILE pointer as an argument to the recieveFileData thread
+
+			pthread_t receiveFileData_thread;
+			if(pthread_create(&receiveFileData_thread, NULL, receiveFileData, createThreadsReceiveFileData(fdptr, csvFileOut) != 0){
+				printf( "pthread_create() failed in file %s line %d\n", __FILE__, __LINE__ );
+				return 0;
+			}
+
+			pthread_join(sendFileData_thread, NULL);
+		}
+
+		sem_post(&client_pool);
+
+		/*
+		
 		int rowSet1Length=0;
 		int rowSet2Length=0;
 		int totalthreads = travelDirectoryArgs->counter;
@@ -452,6 +586,8 @@ void goThroughPath(void* args)
 		free(finalDirectoryPath);
 		free(args);
 		exit(0);
+
+		*/
 	}
 
 	pthread_exit(NULL);
@@ -481,11 +617,19 @@ args_travelDirectory * createThreadsTraverse(char * output_dir, int counter, pth
 	return travelDirectoryArgs;
 }
 
-args_watchConnection * createThreadsWatchConnection(int *fdptr, ) {
+args_watchConnection * createThreadsWatchConnection(int *fdptr) {
 	args_watchConnection watchConnectionArgs = (args_watchConnection *)malloc(sizeof(args_watchConnection));
 	watchConnectionArgs->fdptr = fdptr;
 
 	return watchConnectionArgs;
+}
+
+args_receiveFileData * createThreadsReceiveFileData(int *fdptr, FILE* csvFileOut) {
+	args_receiveFileData receiveFileDataArgs = (args_sendFileData *)malloc(sizeof(args_receiveFileData));
+	receiveFileDataArgs->fdptr = fdptr;
+	receiveFileDataArgs->csvFileOut = csvFileOut;
+
+	return receiveFileDataArgs;
 }
 
 //If it already contains the phrase -sorted-SOMEVALIDCOLUMN.csv then the file is already sorted
@@ -505,3 +649,4 @@ int isAlreadySorted(char *pathname,char *column_to_sort) {
 		return 1;		
 	}
 }
+				

@@ -61,14 +61,22 @@ typedef struct threadArg3{
     Row ** row2;
 } args_sortedRowStackPop;
 
-//arguments for a thread that watches the connection on some socket
+//arguments for a thread that watches the connection on some socket an d waits for termination
 typedef struct threadArg4{
     int* fdptr;
 } args_watchConnection;
+
+//arguments for a thread that watches the connection on some socket and recives sorted files
+typedef struct threadArg5{
+    int* fdptr;
+    FILE* csvFileOut;
+} args_receiveFileData;
 
 int travdir(const char * input_dir_path, char* column_to_sort, const char * output_dir);
 void createSocket(void* margs);
 void goThroughPath(void* margs2);
 args_sortFile * createThreadsTransmit(char* pathname, char* d_name, FILE* csvFile, char* output_dir, char* directory_path, int counter);
 args_travelDirectory * createThreadsTraverse(char * output_dir, int counter, pthread_t* threadHolder, DIR * directory, char *directory_path);
+args_watchConnection * createThreadsWatchConnection(int *fdptr);
+args_receiveFileData * createThreadsReceiveFileData(int *fdptr);
 int isAlreadySorted(char *pathname,char *column_to_sort);
