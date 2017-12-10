@@ -145,19 +145,21 @@ void* sendFileData(void* args)
      /* set buffer and size to 0; they will be changed by getline */
 	char *headerline = NULL;
 	size_t size = 0;
+	sd = *(margs->fdptr);
 
 	ssize_t headerlineSize = getline(&headerline, &size, margs->csvFile);
 	printf("number of bytes of the headerline %s\n", headerlineSize);
 
-	if(lineSize != -1){
+	if(headerlineSize != -1){
 		// Discard newline character if it is present,
-		if (lineSize > 0 && line[lineSize-1] == '\n') {
-		    line[lineSize-1] = '\0';
+		if (headerlineSize > 0 && headerline[headerlineSize-1] == '\n') {
+		    headerline[headerlineSize-1] = '\0';
 		}
 	}
 
 	//write to the server the headerline? not sure if we need this 
-	write(margs->fdptr, headerlineSize, strlen(headerlineSize)+1);
+	write(sd, headerlineSize, strlen(headerlineSize)+1);
+	write(sd, headerline, strlen(headerline)+1);
 
 	// Read each line
 	// The existing line will be re-used, or, if necessary,
@@ -176,11 +178,13 @@ void* sendFileData(void* args)
 			    line[lineSize-1] = '\0';
 			}
 			//write to the server the size of the line
-			write(margs->fdptr, lineSize, strlen(lineSize)+1);	
+			send(sd, lineSize, strlen(lineSize)+1, 0);
 
 			//write to the server the actual line data
 	        char* tmp = strdup(line);
-	        write(margs->fdptr, tmp, strlen(tmp)+1);
+	        send(sd, tmp, strlen(tmp)+1, 0);
+	        printf("After the send function of the line \n");
+	        //write(margs->fdptr, tmp, strlen(tmp)+1);
 		}
 		// NOTE strtok clobbers tmp
         free(tmp);
@@ -189,7 +193,7 @@ void* sendFileData(void* args)
     //write that we are done reading the lines
     chars endLine[6];
     endLine = "<EOF>";
-    write(margs->fdptr, endLine, strlen(endLine)+1);
+    write(sd, endLine, strlen(endLine)+1);
 
 	// free the line and the socket pointer
 	free(line);
