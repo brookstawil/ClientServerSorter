@@ -38,6 +38,7 @@ int main (int argc, char* argv[]) {
 
 	char *errorMessage = "\n";
 	int i,semaphore_size; 
+
 	for (i = 0; i < argc; i++) { 
 		//printf("%s\n", argv[i]); 
 		char* argument = argv[i];
@@ -51,7 +52,7 @@ int main (int argc, char* argv[]) {
 			global_portNum = argv[i+1];
 		} else if(strcmp(argument, "-h")==0){
 			global_serverAddress = argv[i+1];
-		} else if(strcmp(argument, "-s"){
+		} else if(strcmp(argument, "-s")){
 			semaphore_size = atoi(argv[i+1]);
 		}
 	}
@@ -133,13 +134,67 @@ void* watchConnection(void* args)
 //A sendFileData thread will have the socket file descriptor (and other information?) passed in an arguments struct
 void* sendFileData(void* args) 
 {
-	args_sendFileData* sendFileDataArgs = args;
 	/*
 		We must transmit:
 			1. The size of the line
 			2. The line itself
 			3. Some ending signal once the file is done
 	*/
+	args_sendFileData* margs = args;
+
+     /* set buffer and size to 0; they will be changed by getline */
+	char *headerline = NULL;
+	size_t size = 0;
+
+	ssize_t headerlineSize = getline(&headerline, &size, margs->csvFile);
+	printf("number of bytes of the headerline %s\n", headerlineSize);
+
+	if(lineSize != -1){
+		// Discard newline character if it is present,
+		if (lineSize > 0 && line[lineSize-1] == '\n') {
+		    line[lineSize-1] = '\0';
+		}
+	}
+
+	//write to the server the headerline? not sure if we need this 
+	write(margs->fdptr, headerlineSize, strlen(headerlineSize)+1);
+
+	// Read each line
+	// The existing line will be re-used, or, if necessary,
+	// It will be `free`'d and a new larger buffer will `malloc`'d
+	//I heard that fgets is better so I want to see if this works
+	char line[1024];
+
+    while (fgets(line, 1024, margs->csvFile))
+    {
+    	size_t size = 0;
+    	ssize_t lineSize = getline(&line, &size, margs->csvFile);
+		printf("number of bytes of the line %s\n", lineSize);
+		if(lineSize != -1){
+			// Discard newline character if it is present,
+			if (lineSize > 0 && line[lineSize-1] == '\n') {
+			    line[lineSize-1] = '\0';
+			}
+			//write to the server the size of the line
+			write(margs->fdptr, lineSize, strlen(lineSize)+1);	
+
+			//write to the server the actual line data
+	        char* tmp = strdup(line);
+	        write(margs->fdptr, tmp, strlen(tmp)+1);
+		}
+		// NOTE strtok clobbers tmp
+        free(tmp);
+    }
+
+    //write that we are done reading the lines
+    chars endLine[6];
+    endLine = "<EOF>";
+    write(margs->fdptr, endLine, strlen(endLine)+1);
+
+	// free the line and the socket pointer
+	free(line);
+	close(margs->fdptr);
+
 }
 
 //The recieveFileData thread works very much like the watchConnection thread implemented above.
@@ -486,7 +541,7 @@ void goThroughPath(void* args)
 			//We now pass this FILE pointer as an argument to the recieveFileData thread
 
 			pthread_t receiveFileData_thread;
-			if(pthread_create(&receiveFileData_thread, NULL, receiveFileData, createThreadsReceiveFileData(fdptr, csvFileOut) != 0){
+			if(pthread_create(&receiveFileData_thread, NULL, receiveFileData, createThreadsReceiveFileData(fdptr, csvFileOut) != 0)){
 				printf( "pthread_create() failed in file %s line %d\n", __FILE__, __LINE__ );
 				return 0;
 			}
@@ -601,7 +656,6 @@ args_sendFileData * createThreadsSendFileData(int *fdptr) {
 	args_sendFileData->directoryName = directoryName;
 	args_sendFileData->csvFile = csvFile;
 	args_sendFileData->directory_path = directory_path;
-	args_sendFileData->counter = counter;
 
 	return sendFileDataArgs;
 }
