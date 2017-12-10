@@ -148,7 +148,7 @@ void* sendFileData(void* args)
 	sd = *(margs->fdptr);
 
 	ssize_t headerlineSize = getline(&headerline, &size, margs->csvFile);
-	printf("number of bytes of the headerline %s\n", headerlineSize);
+	printf("Number of bytes of the headerline: %s\n", headerlineSize);
 
 	if(headerlineSize != -1){
 		// Discard newline character if it is present,
@@ -164,21 +164,21 @@ void* sendFileData(void* args)
 	// Read each line
 	// The existing line will be re-used, or, if necessary,
 	// It will be `free`'d and a new larger buffer will `malloc`'d
-	//I heard that fgets is better so I want to see if this works
+	// I heard that fgets is better so I want to see if this works
 	char line[1024];
 
     while (fgets(line, 1024, margs->csvFile))
     {
     	size_t size = 0;
     	ssize_t lineSize = getline(&line, &size, margs->csvFile);
-		printf("number of bytes of the line %s\n", lineSize);
+		printf("number of bytes of the line: %s\n", lineSize);
 		if(lineSize != -1){
 			// Discard newline character if it is present,
 			if (lineSize > 0 && line[lineSize-1] == '\n') {
 			    line[lineSize-1] = '\0';
 			}
 			//write to the server the size of the line
-			send(sd, lineSize, strlen(lineSize)+1, 0);
+			send(sd, lineSize, sizeof(lineSize), 0);
 
 			//write to the server the actual line data
 	        char* tmp = strdup(line);
@@ -191,7 +191,7 @@ void* sendFileData(void* args)
     }
 
     //write that we are done reading the lines
-    chars endLine[6];
+    char endLine[6];
     endLine = "<EOF>";
     write(sd, endLine, strlen(endLine)+1);
 
