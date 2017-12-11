@@ -14,11 +14,14 @@
 #include "sorterthreading.c"
 #include "sorter_client.h"
 #include "stack.c"
+#include "sorter_server.c"
 
 #define MAX_PATH_LENGTH 256
 #define DISCONNECT_SIGNAL "<END>"
 #define ENDMARKER "EOD"
 #define COLUMNENDMARKER "EOC"
+#define MAX_THREADS 4096
+#define HEADER_LINE "color,director_name,num_critic_for_reviews,duration,director_facebook_likes,actor_3_facebook_likes,actor_2_name,actor_1_facebook_likes,gross,genres,actor_1_name,movie_title,num_voted_users,cast_total_facebook_likes,actor_3_name,facenumber_in_poster,plot_keywords,movie_imdb_link,num_user_for_reviews,language,country,content_rating,budget,title_year,actor_2_facebook_likes,imdb_score,aspect_ratio,movie_facebook_likes\n"
 
 //the root is now an initial thread process
 pid_t root;
@@ -31,6 +34,7 @@ char *global_column_to_sort;
 char *global_serverAddress;
 char *global_portNum;
 sem_t client_pool;
+int lineCount;
 
 int main (int argc, char* argv[]) {
 
@@ -95,7 +99,6 @@ int main (int argc, char* argv[]) {
 	}
 
 	sem_init(&mutex, 0, semaphore_size);
-	StackOfSortedFiles = stack_create(30);
 
 	travdir(global_starting_dir, global_column_to_sort, global_output_dir);	
 
@@ -144,20 +147,21 @@ void* sendFileData(void* args)
 	args_sendFileData* margs = args;
 
      /* set buffer and size to 0; they will be changed by getline */
-	char *headerline = NULL;
-	size_t size = 0;
+	//char *headerline = NULL;
+	//size_t size = 0;
 	sd = *(margs->fdptr);
+	lineCount = 0;
 
-	ssize_t headerlineSize = getline(&headerline, &size, margs->csvFile);
-	printf("Number of bytes of the headerline: %s\n", headerlineSize);
+	//ssize_t headerlineSize = getline(&headerline, &size, margs->csvFile);
 
+	/*
 	if(headerlineSize != -1){
 		// Discard newline character if it is present,
 		if (headerlineSize > 0 && headerline[headerlineSize-1] == '\n') {
 		    headerline[headerlineSize-1] = '\0';
 		}
 	}
-
+	*/
 	//write to the server the headerline? not sure if we need this 
 	/*
 		write(sd, headerlineSize, strlen(headerlineSize)+1);
@@ -187,7 +191,7 @@ void* sendFileData(void* args)
 	        char* tmp = strdup(line);
 	        send(sd, tmp, strlen(tmp)+1, 0);
 	        printf("After the send function of the line \n");
-	        //write(margs->fdptr, tmp, strlen(tmp)+1);
+	        lineCount++;
 		} else {
 			printf("ERROR: getline() call failed.\n");
 		}
@@ -206,8 +210,6 @@ void* sendFileData(void* args)
     write(sd, COLUMNENDMARKER, strlen(COLUMNENDMARKER)+1);
 
 	//no need to close the socket pointer here
-
-
 }
 
 //The recieveFileData thread works very much like the watchConnection thread implemented above.
@@ -220,8 +222,7 @@ void* receiveFileData(void* args) {
 		The server should be sending lines over the socket, while the client reads in and interprets the bytes.
 	*/
 
-	int sd;
-	int i;
+	int sd, i;
 	char buffer[1024];
 	char output[1024];
 
@@ -239,7 +240,21 @@ void* receiveFileData(void* args) {
 		}
 		else
 		{
-			
+			//PSEUCODE:
+			/*
+				The server uses the send function back to the client 4 times in this order:
+				1. doSend(sockFD, header) -> which is unnecessary but like okay we can take the headerline
+				2. doSend(sockFd,rows) -> which is the rows in a char[] array
+				3. doSend(sockFd, EOD) -> which just sends us EOD to signal they are done sending us the char[] array
+				4. doSend(sockFd, EOC) -> which is unnecessary buy like okay we can take the column?
+Idea: We can do a switch statement and have an int that holds 1-4 holding which data the server is sending through the socket
+			*/
+			size_t destination_size = sizeof (buffer);
+			char rows[destination_size];
+
+			strncpy(rows, buffer, destination_size);
+			rows[destination_size - 1] = '\0';
+			//get buffer from the server-> CHECK DOSEND FUNCTION WE ARE GETTING A CHAR BUFFER[] THAT HOLDS THE ROWS
 			/*
 				Here the code to read in the line from the server should be made.
 				The lines recieved from the server will then be written to some file.
@@ -247,8 +262,13 @@ void* receiveFileData(void* args) {
 			*/	
 			
 			//receiveFileData->csvFileOut is now a file pointer on the client that can be written to.
-			
 
+			/*
+				File should be written to the location.
+			*/
+			//global row count 
+			parseData(rows, lineCount);
+			printToCSV(receiveFileData->csvFileOut, rows, lineCount, 28);
 
 		}
 		//Not sleeping on the this recv may result in the client exiting early 
@@ -320,7 +340,7 @@ int travdir(const char * input_dir_path, char* column_to_sort, const char * outp
 	}
 
 	//have one thread go through directories
-	int numThreads = 50;
+	int numThreads = MAX_THREADS;
 	pthread_t* threadHolder = (pthread_t*)(malloc(sizeof(pthread_t) * numThreads));
 	goThroughPath(createThreadsTraverse(output_dir, counterofthreads, threadHolder, directory, directory_path));
 
@@ -428,14 +448,6 @@ void goThroughPath(void* args)
 					*/
 
 					/*
-						We must transmit:
-							1. The size of the line
-							2. The line itself
-							3. Some ending signal once the file is done
-						This is to be implemented in the sendFileData() thread function described above.
-					*/
-
-					/*
 						If we want to accomplish the first extra credit, we would create some semaphore in main, using the -s parameter.
 						And ANYWHERE we call createSockte, we look at this semaphore to check and see whether we have already made a certain number of connections.
 						Most likely we would check the semaphore here and then call this conditional just below.
@@ -509,12 +521,10 @@ void goThroughPath(void* args)
 
 	free(travelDirectoryArgs->directory);
 
-
 	/*	
 		At this point in execution any given directory thread should have finished with its children.
 		Only the root thread should be requesting for the sorted files, otherwise let the individual directory threads exit.
 	*/
-
 
 	//Anything that occurs in this conditional will only be done by the root thread, otherwise the individual directory threads will skip this and exit.
 	if(getpid() == root && pthread_self() == rootTID)
@@ -560,113 +570,115 @@ void goThroughPath(void* args)
 			}
 
 			pthread_join(receiveFileData_thread, NULL);
-
 			close(sd);
+
 		}
 
 		sem_post(&client_pool);
-
-		/*
-			File should be written to the location.
-		*/
-
 		sem_destroy(&client_pool);
-
-		/*
-		
-		int rowSet1Length=0;
-		int rowSet2Length=0;
-		int totalthreads = travelDirectoryArgs->counter;
-
-		printf("TIDS of all child threads: ");
-		for(i = 0; i < counterofthreads; i++){
-			printf("%u,", threadIds[i]);
-		}
-
-		free(threadIds);
-		printf("\n");
-		printf("Total number of threads: %d\n\r", counterofthreads);
-		
-		//In this implementation we will pop and push from the stack once the threads have all completed
-		//While the stack is not empty, we pop twice and merge.
-		//If one of the Row ** that we pop is empty then we must have all of the rows merged together and can exit
-		printf("\n");
-
-		Row ** sortedRows;
-
-		while(!is_empty(StackOfSortedFiles)) {
-			//printf("The stack has %d elements in it.\n", StackOfSortedFiles->count);
-			if(StackOfSortedFiles->count > 1) {
-
-				Row ** rowSet1 = pop(StackOfSortedFiles);
-				Row ** rowSet2 = pop(StackOfSortedFiles);
-				rowSet1Length = getAmountOfRows(rowSet1);
-				rowSet2Length = getAmountOfRows(rowSet2);
-				sortedRows = malloc(sizeof(Row) * (rowSet1Length + rowSet2Length + 1));
-
-				if(sortedRows != NULL) {
-
-					mergeRowsTwoFinger(sortedRows, rowSet1, rowSet2);
-					push(StackOfSortedFiles, sortedRows);
-
-				} else {
-
-				}
-			} else if (StackOfSortedFiles->count == 1) {
-
-				sortedRows = pop(StackOfSortedFiles);
-				rowSet1Length = getAmountOfRows(sortedRows);
-
-			}
-		}
-		printf("The stack is now empty. The rows are now stored in sortedRows.\n");
-
-		printf("The rows will now be printed to the masterCSV file.\n");
-
-		//open the output directory again and put the csv file there.
-		if(*global_output_dir=='.'){
-			finalDirectoryPath = (char *)calloc(1, strlen(global_output_dir) + sizeof("/AllFiles-sorted-") + sizeof(global_column_to_sort) + sizeof(".csv") + 5);
-			strcat(finalDirectoryPath, global_output_dir);
-		}
-
-		if(finalDirectoryPath[strlen(finalDirectoryPath) - 1] == '/') {
-			strcat(finalDirectoryPath,"AllFiles-sorted-");
-		} else {
-			strcat(finalDirectoryPath,"/AllFiles-sorted-");
-		}
-
-		strcat(finalDirectoryPath, global_column_to_sort);
-		strcat(finalDirectoryPath,".csv");
-
-		FILE *csvFileOut = fopen(finalDirectoryPath,"w");
-
-		printToCSV(csvFileOut, sortedRows, rowSet1Length, NUM_COLS);
-
-		stack_destroy(StackOfSortedFiles);
-
-		//free the rows poped from the stack
-		for(i = 0; i < rowSet1Length; i++) {
-			//for(j = 0; j < NUM_COLS; j++) {
-				//free(sortedRows[i]->colEntries[j].value);
-				//sortedRows[i]->colEntries[j].value = NULL;
-				//free(sortedRows[i]->colEntries[j].type);
-				//sortedRows[i]->colEntries[j].type = NULL;
-			//}
-			free(sortedRows[i]);
-			sortedRows[i] = NULL;
-		}
-
-		free(sortedRows);
-		sortedRows = NULL;
-		
 		free(finalDirectoryPath);
 		free(args);
 		exit(0);
-
-		*/
 	}
 
 	pthread_exit(NULL);
+}
+
+//parse the data
+int parseData(char lines[], int totalLines){
+
+    char  input[MSG_SIZE] = {0};
+    char **cols;
+    int arraySize=1000;
+    //28 total columns with a null entry at end
+
+    // double pointer to store all rows, will be used in merge sort
+    rowType ** rows=malloc(arraySize * sizeof(rowType *));
+    // printf("initial size of colTypes:%d\n", sizeof(colTypes)/sizeof(colTypes[0]));
+
+    // process header line
+    int length = strlen(lines[0]);
+    memcpy(input, lines[0], length);
+
+    // split function for initial header columns
+
+    doTrim(input, length);
+    cols=split(input, ',');
+
+    int lineCount2 = 0;
+    for (int idx = 1; idx < totalLines; idx++) {
+
+        length = strlen(lines[idx]);
+
+        memset(input, '\0', MSG_SIZE);
+
+        memcpy(input, lines[idx], length);
+
+        // printf("read: %d bytes\n", bytesRead);
+        // takes off unneeded chars at end of line, and parsing for the rest of input
+        doTrim(input,length);
+        cols=split(input, ',');
+
+        int colIdx=0;
+        if(lineCount2 == arraySize){
+            arraySize*=2;
+            rows=realloc(rows, arraySize*sizeof(rowType *));
+            //   printf("more memory allocated");
+        }
+        rows[lineCount2]=malloc(29*sizeof(colEntry));
+        // get data from line
+        for(colIdx=0;colIdx<28;colIdx++){
+            char * colName=colTypes[colIdx].name;
+            char * value=NULL;
+            if(strlen(cols[colIdx])==0){
+                value="";
+            }
+            else{
+                int len=strlen(cols[colIdx]);
+                value=malloc(len+1);
+                memset(value, '\0', len+1);
+                memcpy(value, cols[colIdx], len);
+            }
+            colEntry thisCol={colName, value};
+            // line data stored in rows
+            memcpy(&rows[lineCount2]->colEntries[colIdx], &thisCol, sizeof(colEntry));
+
+        }
+        // error checking for invalid line entries
+        if(colIdx<27){
+            printf("only %d columns found in line %d %s", colIdx, lineCount2, input);
+            exit(1);
+        }
+
+        lineCount2++;
+    }
+    return 0;
+}
+
+void printToCSV(FILE *csv_out, rowType **rows, int validNumRows, int validNumCols) {
+    //Print the header line.
+    fprintf(csv_out, HEADER_LINE);
+
+    int i=0,j=0;
+    //Loop through the rows
+    //I think this is how you do it
+    for (i = 0; i < validNumRows; i++) {
+        //Loop through the columns
+        for(j = 0; j < validNumCols-1; j++) {
+            if(rows[i]->colEntries != NULL) {
+                fprintf(csv_out, "%s,", rows[i]->colEntries[j].value);
+            } else {
+                fprintf(csv_out, "<NULL>,");
+            }
+        }
+
+        if(rows[i]->colEntries != NULL) {
+            fprintf(csv_out, "%s\n", rows[i]->colEntries[j].value);
+        } else {
+            fprintf(csv_out, "<NULL>\n");
+        }
+    } 
+    fclose(csv_out);
 }
 
 //Helper function that sets the arguments for a thread that transmits a given file 
