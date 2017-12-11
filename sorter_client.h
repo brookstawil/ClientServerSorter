@@ -36,11 +36,7 @@ typedef struct threadArg{
 //arguments for sending file data across some socket file descriptor
 typedef struct threadArg{
     int* fdptr;
-    char* pathName;
-	char* directoryName;
 	FILE* csvFile;
-	char* directory_path;
-	int counter;
 } args_sendFileData;
 
 //arguments for travdir

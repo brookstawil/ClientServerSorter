@@ -17,6 +17,8 @@
 
 #define MAX_PATH_LENGTH 256
 #define DISCONNECT_SIGNAL "<END>"
+#define ENDMARKER "EOD"
+#define COLUMNENDMARKER "EOC"
 
 //the root is now an initial thread process
 pid_t root;
@@ -194,12 +196,17 @@ void* sendFileData(void* args)
     }
 
     //write that we are done reading the lines
-    char endLine[6];
-    endLine = "<EOF>";
-    write(sd, endLine, strlen(endLine)+1);
+    write(sd, ENDMARKER, strlen(ENDMARKER)+1);
 
-	// free the line and the socket pointer
-	free(line);
+    //write the column to sort on and end signal
+    char column[30];
+    sprintf(column, "%s", global_column_to_sort);
+    printf("column to sort are we doing this correctly %s \n", column);
+    write(sd,column, strlen(column)+1);
+    write(sd, COLUMNENDMARKER, strlen(COLUMNENDMARKER)+1);
+
+	//no need to close the socket pointer here
+
 
 }
 
@@ -224,6 +231,7 @@ void* receiveFileData(void* args) {
 		//These two lines simply write what was being recieved to STDOUT
 		sprintf( output, ">%s<\n", buffer );
 		write( 1, output, strlen(output) );
+		//TODO: WE HAVE TO WRITE DMP HERE BECAUSE THAT IS THE SIGNAL HE GETS
 
 		if(strcmp(buffer, DISCONNECT_SIGNAL)==0)
 		{
@@ -665,10 +673,7 @@ void goThroughPath(void* args)
 args_sendFileData * createThreadsSendFileData(int *fdptr) {
 	args_sendFileData* sendFileDataArgs = (args_sendFileData *)malloc(sizeof(args_sendFileData));
 	args_sendFileData->fdptr = fdptr;
-	args_sendFileData->pathName = pathName;
-	args_sendFileData->directoryName = directoryName;
 	args_sendFileData->csvFile = csvFile;
-	args_sendFileData->directory_path = directory_path;
 
 	return sendFileDataArgs;
 }
