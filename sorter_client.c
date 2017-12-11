@@ -15,8 +15,15 @@
 #include "sorter_client.h"
 #include "stack.c"
 
+
+#define  SOD "SOD"
+#define  EOD "EOD"
+#define SOC "SOC"
+#define EOC "EOC"
+#define DMP "DMP"
+#define SRT "SRT"
+
 #define MAX_PATH_LENGTH 256
-#define DISCONNECT_SIGNAL "<END>"
 
 //the root is now an initial thread process
 pid_t root;
@@ -135,9 +142,8 @@ void* sendFileData(void* args)
 {
 	/*
 		We must transmit:
-			1. The size of the line
-			2. The line itself
-			3. Some ending signal once the file is done
+			1. The line itself
+			2. Some ending signal once the file is done
 	*/
 	args_sendFileData* margs = args;
 
@@ -156,11 +162,11 @@ void* sendFileData(void* args)
 		}
 	}
 
-	//write to the server the headerline? not sure if we need this 
-	/*
-		write(sd, headerlineSize, strlen(headerlineSize)+1);
-		write(sd, headerline, strlen(headerline)+1);
-	*/
+	//Server is specifying forr the header line
+	//Do not to explicitly write the size, server will be able to do it on the read
+	//write(sd, headerlineSize, strlen(headerlineSize)+1);
+	write(sd, headerline, strlen(headerline)+1);
+	
 
 	// Read each line
 	// The existing line will be re-used, or, if necessary,
@@ -178,8 +184,9 @@ void* sendFileData(void* args)
 			if (lineSize > 0 && line[lineSize-1] == '\n') {
 			    line[lineSize-1] = '\0';
 			}
+			
 			//write to the server the size of the line
-			send(sd, lineSize, sizeof(lineSize), 0);
+			//send(sd, lineSize, sizeof(lineSize), 0);
 
 			//write to the server the actual line data
 	        char* tmp = strdup(line);
@@ -194,9 +201,8 @@ void* sendFileData(void* args)
     }
 
     //write that we are done reading the lines
-    char endLine[6];
-    endLine = "<EOF>";
-    write(sd, endLine, strlen(endLine)+1);
+    endLine = EOD;
+    write(sd, endLine, strlen(endLine));
 
 	// free the line and the socket pointer
 	free(line);
@@ -421,9 +427,8 @@ void goThroughPath(void* args)
 
 					/*
 						We must transmit:
-							1. The size of the line
-							2. The line itself
-							3. Some ending signal once the file is done
+							1. The line itself
+							2. Some ending signal once the file is done
 						This is to be implemented in the sendFileData() thread function described above.
 					*/
 
