@@ -548,7 +548,7 @@ int doSend(int sockFd, char *msg) {
 
     memcpy(buffer, &len, sizeof(int));
     memcpy(buffer + sizeof(int), msg, len);
-
+    //buffer is all of the rows and the message EOD at the end 
     return send(sockFd, buffer, len+ sizeof(int), 0);
 
 }

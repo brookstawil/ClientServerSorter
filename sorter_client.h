@@ -36,14 +36,9 @@ typedef struct threadArg{
 //arguments for sending file data across some socket file descriptor
 typedef struct threadArg{
     int* fdptr;
-    char* pathName;
-	char* directoryName;
 	FILE* csvFile;
-	char* directory_path;
-	int counter;
 } args_sendFileData;
 
-//arguments for travdir
 //These arguments are used by the directoryTraversing threads
 typedef struct threadArg2{
 	DIR* directory;
@@ -80,3 +75,5 @@ args_travelDirectory * createThreadsTraverse(char * output_dir, int counter, pth
 args_watchConnection * createThreadsWatchConnection(int *fdptr);
 args_receiveFileData * createThreadsReceiveFileData(int *fdptr);
 int isAlreadySorted(char *pathname,char *column_to_sort);
+void printToCSV(FILE *csv_out, Row ** rows, int numRows, int numCols);
+int parseData(char *lines[], int totalLines);
