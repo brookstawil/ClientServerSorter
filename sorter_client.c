@@ -127,7 +127,6 @@ void* watchConnection(void* args)
 
 	sprintf( output, "Server disconnected\n" );
 	write( 1, output, strlen(output) );
-	close(sd);
 	exit(1);
 }
 
@@ -158,8 +157,10 @@ void* sendFileData(void* args)
 	}
 
 	//write to the server the headerline? not sure if we need this 
-	write(sd, headerlineSize, strlen(headerlineSize)+1);
-	write(sd, headerline, strlen(headerline)+1);
+	/*
+		write(sd, headerlineSize, strlen(headerlineSize)+1);
+		write(sd, headerline, strlen(headerline)+1);
+	*/
 
 	// Read each line
 	// The existing line will be re-used, or, if necessary,
@@ -171,7 +172,7 @@ void* sendFileData(void* args)
     {
     	size_t size = 0;
     	ssize_t lineSize = getline(&line, &size, margs->csvFile);
-		printf("number of bytes of the line: %s\n", lineSize);
+		printf("Number of bytes of the line: %s\n", lineSize);
 		if(lineSize != -1){
 			// Discard newline character if it is present,
 			if (lineSize > 0 && line[lineSize-1] == '\n') {
@@ -185,6 +186,8 @@ void* sendFileData(void* args)
 	        send(sd, tmp, strlen(tmp)+1, 0);
 	        printf("After the send function of the line \n");
 	        //write(margs->fdptr, tmp, strlen(tmp)+1);
+		} else {
+			printf("ERROR: getline() call failed.\n");
 		}
 		// NOTE strtok clobbers tmp
         free(tmp);
@@ -197,7 +200,6 @@ void* sendFileData(void* args)
 
 	// free the line and the socket pointer
 	free(line);
-	close(margs->fdptr);
 
 }
 
@@ -248,7 +250,6 @@ void* receiveFileData(void* args) {
 
 	sprintf( output, "Server disconnected\n" );
 	write( 1, output, strlen(output) );
-	close(sd);
 	exit(1);
 
 }
@@ -492,7 +493,7 @@ void goThroughPath(void* args)
 		We first must join all of the directory threads before we make a final request for the sorted files.
 	*/
 
-	//Join the directory threads  to finish 
+	//Join the directory threads to finish 
 	int i=0,j=0;
 	for(i = 0; i < travelDirectoryArgs->counter; i++){
 		pthread_join(travelDirectoryArgs->threadHolder[i], NULL);
@@ -545,15 +546,23 @@ void goThroughPath(void* args)
 			//We now pass this FILE pointer as an argument to the recieveFileData thread
 
 			pthread_t receiveFileData_thread;
-			if(pthread_create(&receiveFileData_thread, NULL, receiveFileData, createThreadsReceiveFileData(fdptr, csvFileOut) != 0)){
+			if(pthread_create(&receiveFileData_thread, NULL, receiveFileData, createThreadsReceiveFileData(sd, csvFileOut) != 0)){
 				printf( "pthread_create() failed in file %s line %d\n", __FILE__, __LINE__ );
 				return 0;
 			}
 
-			pthread_join(sendFileData_thread, NULL);
+			pthread_join(receiveFileData_thread, NULL);
+
+			close(sd);
 		}
 
 		sem_post(&client_pool);
+
+		/*
+			File should be written to the location.
+		*/
+
+		sem_destroy(&client_pool);
 
 		/*
 		
