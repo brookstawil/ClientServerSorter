@@ -9,8 +9,8 @@
 #include "sorter_server.h"
 #include "mergesort.c"
 
-#define  SOD "SOD"
-#define  EOD "EOD"
+#define SOD "SOD"
+#define EOD "EOD"
 #define SOC "SOC"
 #define EOC "EOC"
 #define DMP "DMP"
@@ -23,17 +23,17 @@
 char * readHeader(char *buffer);
 #define PORT 8090
 
-typedef struct headerType {
-    char * name;
-    char* value;
-} headerType;
+        typedef struct headerType {
+            char * name;
+            char* value;
+        } headerType;
 
-typedef struct allRowsType {
-    int32_t rowCount;
-    rowType ** rows;
-} allRowsType;
+        typedef struct allRowsType {
+            int32_t rowCount;
+            rowType ** rows;
+        } allRowsType;
 
-int allRowsArraySize = 6000;
+        int allRowsArraySize = 6000;
 
 pthread_mutex_t rowLock;
 pthread_mutex_t headerLock;
@@ -47,7 +47,6 @@ char** split(char* line, char delimiter);
 char * getSortCol(char *buf, int buffSize);
 void doTrim(char input[], size_t size);
 void setColumns(column colTypes[]);
-int doSort(rowType **, int, char *, int);
 char * getColType(column *, const char *);
 int getColIndex(char *column);
 void printRows(rowType **rows, int rowCount, int sockFd);
@@ -71,6 +70,7 @@ int main(int argc, char **argv) {
     while ((c = getopt (argc, argv, "p:")) != -1)
         switch (c)
         {
+
             case 'p':
                 port = atoi(optarg);
                 break;
@@ -147,15 +147,13 @@ int main(int argc, char **argv) {
         }
 
         if (clientCount == 0) {
-            //printf("Received connections from: ");
-            fflush(stdout);
+            printf("Received connections from: ");
             clientCount++;
         }
         else {
             printf(",");
         }
         printf("%s", inet_ntoa(address.sin_addr));
-        fflush(stdout);
         pthread_create(&tids[threadCount], NULL, processClient, &new_sockets[threadCount]);
 
         threadCount++;
@@ -165,6 +163,7 @@ int main(int argc, char **argv) {
             shutdown = 1;
         }
     }
+
 
     exit(0);
 
@@ -197,11 +196,11 @@ void *processClient(void *fd) {
 
         bytesRead = doRead(sockFd, buffer);
         if (bytesRead == 0) {
-            //printf("Exiting after 0 bytes read\n");
+            printf("Exiting after 0 bytes read\n");
             break;
         }
 
-//        printf("line: %d read %d bytes %s\n\n", lineCount, bytesRead, buffer);
+        printf("line: %d read %d bytes %s\n\n", lineCount, bytesRead, buffer);
         doTrim(buffer, bytesRead);
         switch (state) {
 
@@ -209,15 +208,15 @@ void *processClient(void *fd) {
 
                 if (bytesRead == 3 && strncmp(buffer, EOD, 3) == 0) {
 
-//                    printf("got EOD\n");
+                    printf("got EOD\n");
                     fflush(stdout);
                     state = 1;
                 } else if (bytesRead == 3 && strncmp(buffer, DMP, 3) == 0) {
-//                    printf("Got DMP sortColumn\n");
+                    printf("Got DMP sortColumn\n");
                     fflush(stdout);
                     sortColumn = calloc(bytesRead+1, sizeof(char *));
                     memcpy(sortColumn, buffer, bytesRead);
-                    state =3;
+                    state = 3;
                 } else {    // data line
                     if (lineCount == 0 && header == NULL) {
                         /*
@@ -234,8 +233,7 @@ void *processClient(void *fd) {
                     if (lineCount == buffSize) {
                         buffSize *= 2;
                         rows = realloc(rows, buffSize * sizeof(char *));
-//                        printf("realloc !! buffsize is now %d\n", buffSize);
-
+                        printf("realloc !! buffsize is now %d\n", buffSize);
                     }
                     rows[lineCount] = line;
 
@@ -243,7 +241,7 @@ void *processClient(void *fd) {
                 }
                 break;
             case 1 :    // get sort column
-//                printf("sortColumn is: %s\n", buffer);
+                printf("sortColumn is: %s\n", buffer);
                 sortColumn = calloc(bytesRead+1, sizeof(char *));
                 memcpy(sortColumn, buffer, bytesRead);
                 if (sortColIdx == 0) {
@@ -257,8 +255,7 @@ void *processClient(void *fd) {
                 break;
             case 2:     // get EOC marker
                 if (bytesRead == 3 && strncmp(buffer, EOC, 3) == 0) {
-
-//                    printf("got EOC\n");
+                    printf("got EOC\n");
                     fflush(stdout);
                     state = 3;
                 }
@@ -277,7 +274,7 @@ void *processClient(void *fd) {
             pthread_mutex_lock(&rowLock);
 
             doSort(allRows.rows, sortColIdx, colTypes[sortColIdx].type, allRows.rowCount);
-
+            
             doSend(sockFd, header);
 
             printRows(allRows.rows, allRows.rowCount, sockFd);
@@ -285,12 +282,12 @@ void *processClient(void *fd) {
 
             doSend(sockFd, EOD);
 
+
         }
 
         else {
             int rc = sorter2(rows, lineCount, sortColumn);
 
-            //printf("\nsending back EOC\n");
             doSend(sockFd, EOC);
         }
 
@@ -302,6 +299,7 @@ void *processClient(void *fd) {
 }
 
 int sorter2(char *lines[], int totalLines, char *sortColumn){
+    int i=0, idx=1;
 
     char  input[MSG_SIZE] = {0};
 
@@ -327,7 +325,6 @@ int sorter2(char *lines[], int totalLines, char *sortColumn){
 
     // split function for initial header columns
 
-    int i;
     doTrim(input, length);
     cols=split(input, ',');
     for(i=0;i<28;i++){
@@ -343,9 +340,9 @@ int sorter2(char *lines[], int totalLines, char *sortColumn){
         return -1;
     }
 
-    int idx;
+
     int lineCount = 0;
-    for (idx = 1; idx < totalLines; idx++) {
+    for (idx=1; idx < totalLines; idx++) {
 
         length = strlen(lines[idx]);
 
@@ -546,51 +543,33 @@ int doSend(int sockFd, char *msg) {
 
     char buffer[2048] = {0};
 
-    int msgLen = strlen(msg);
-    size_t netLen = htonl(msgLen);
+    int len = strlen(msg);
 
-    memcpy(buffer, &netLen, sizeof(size_t));
-    memcpy(buffer + sizeof(size_t), msg, msgLen);
-
-    return send(sockFd, (void *)buffer, msgLen+ sizeof(size_t), 0);
+    memcpy(buffer, &len, sizeof(int));
+    memcpy(buffer + sizeof(int), msg, len);
+    //buffer is all of the rows and the message EOD at the end 
+    return send(sockFd, buffer, len+ sizeof(int), 0);
 
 }
 
 int doRead(int sockFd, char *buffer) {
 
-    size_t len;
-    char lenBuff[_SIZE_T] = {0};
-    ssize_t totalBytesRead = 0;
-    while (totalBytesRead < sizeof(len)) {
-        ssize_t bytesRead = read(sockFd, &len + totalBytesRead, sizeof(size_t) - totalBytesRead);
-        totalBytesRead += bytesRead;
-    }
-    //memcpy(&len, lenBuff, sizeof(lenBuff));
-    len = ntohl(len);
+    int len;
+    int bytesRead = read(sockFd, &len, sizeof(int));
 
-   // printf("read %d bytes msg length %d\n", totalBytesRead, len);
+    printf("read %d bytes msg length %d\n", bytesRead, len);
 
-    totalBytesRead = 0;
-    while(totalBytesRead < len) {
-        ssize_t  bytesRead = read(sockFd, buffer + totalBytesRead, len - totalBytesRead);
-        //printf("read %d bytes msg length %d\n", bytesRead, len);
-        totalBytesRead += bytesRead;
-        if (totalBytesRead < len) {
-            //printf("Reading additional %d bytes:\n", len - totalBytesRead);
-        }
+    bytesRead = read(sockFd, buffer, len);
 
-    }
+    printf("read %d bytes msg %s\n", bytesRead, buffer);
 
-   // printf("read %d bytes msg %s\n", totalBytesRead, buffer);
-
-    return totalBytesRead;
+    return bytesRead;
 }
 
-
 void printRows(rowType **rows, int rowCount, int sockFd) {
-
+    int i=0, j=0;
     char outBuffer[2048] = {0};
-    int i, j;
+
     for (i = 0; i < rowCount; i++) {
 
         rowType *row = rows[i];
