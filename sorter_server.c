@@ -7,8 +7,10 @@
 #include <pthread.h>
 #include <arpa/inet.h>
 #include "sorter_server.h"
-#define  SOD "SOD"
-#define  EOD "EOD"
+#include "mergesort.c"
+
+#define SOD "SOD"
+#define EOD "EOD"
 #define SOC "SOC"
 #define EOC "EOC"
 #define DMP "DMP"
@@ -18,7 +20,7 @@
 #define BUFF_SIZE 8192
 #define MSG_SIZE 4096
 
-        char * readHeader(char *buffer);
+char * readHeader(char *buffer);
 #define PORT 8090
 
         typedef struct headerType {
@@ -45,7 +47,6 @@ char** split(char* line, char delimiter);
 char * getSortCol(char *buf, int buffSize);
 void doTrim(char input[], size_t size);
 void setColumns(column colTypes[]);
-extern void doSort(rowType **, int, char *, int);
 char * getColType(column *, const char *);
 int getColIndex(char *column);
 void printRows(rowType **rows, int rowCount, int sockFd);
@@ -199,7 +200,7 @@ void *processClient(void *fd) {
             break;
         }
 
-//        printf("line: %d read %d bytes %s\n\n", lineCount, bytesRead, buffer);
+        printf("line: %d read %d bytes %s\n\n", lineCount, bytesRead, buffer);
         doTrim(buffer, bytesRead);
         switch (state) {
 
@@ -207,11 +208,11 @@ void *processClient(void *fd) {
 
                 if (bytesRead == 3 && strncmp(buffer, EOD, 3) == 0) {
 
-//                    printf("got EOD\n");
+                    printf("got EOD\n");
                     fflush(stdout);
                     state = 1;
                 } else if (bytesRead == 3 && strncmp(buffer, DMP, 3) == 0) {
-//                    printf("Got DMP sortColumn\n");
+                    printf("Got DMP sortColumn\n");
                     fflush(stdout);
                     sortColumn = calloc(bytesRead+1, sizeof(char *));
                     memcpy(sortColumn, buffer, bytesRead);
@@ -232,9 +233,7 @@ void *processClient(void *fd) {
                     if (lineCount == buffSize) {
                         buffSize *= 2;
                         rows = realloc(rows, buffSize * sizeof(char *));
-//                        printf("realloc !! buffsize is now %d\n", buffSize);
-
-
+                        printf("realloc !! buffsize is now %d\n", buffSize);
                     }
                     rows[lineCount] = line;
 
@@ -242,7 +241,7 @@ void *processClient(void *fd) {
                 }
                 break;
             case 1 :    // get sort column
-//                printf("sortColumn is: %s\n", buffer);
+                printf("sortColumn is: %s\n", buffer);
                 sortColumn = calloc(bytesRead+1, sizeof(char *));
                 memcpy(sortColumn, buffer, bytesRead);
                 if (sortColIdx == 0) {
@@ -256,8 +255,7 @@ void *processClient(void *fd) {
                 break;
             case 2:     // get EOC marker
                 if (bytesRead == 3 && strncmp(buffer, EOC, 3) == 0) {
-
-//                    printf("got EOC\n");
+                    printf("got EOC\n");
                     fflush(stdout);
                     state = 3;
                 }
@@ -301,6 +299,7 @@ void *processClient(void *fd) {
 }
 
 int sorter2(char *lines[], int totalLines, char *sortColumn){
+    int i=0, idx=1;
 
     char  input[MSG_SIZE] = {0};
 
@@ -328,7 +327,7 @@ int sorter2(char *lines[], int totalLines, char *sortColumn){
 
     doTrim(input, length);
     cols=split(input, ',');
-    for(int i=0;i<28;i++){
+    for(i=0;i<28;i++){
         if(strcmp(cols[i], sortColumn)==0){
             foundSortCol=1;
             // stores the index of designated column to sort on
@@ -343,7 +342,7 @@ int sorter2(char *lines[], int totalLines, char *sortColumn){
 
 
     int lineCount = 0;
-    for (int idx = 1; idx < totalLines; idx++) {
+    for (idx=1; idx < totalLines; idx++) {
 
         length = strlen(lines[idx]);
 
@@ -408,7 +407,7 @@ int sorter2(char *lines[], int totalLines, char *sortColumn){
         allRows.rows = realloc(allRows.rows, allRowsArraySize*sizeof(rowType *));
     }
 
-    for (int i = 0; i < lineCount; i++, startRow++) {
+    for (i = 0; i < lineCount; i++, startRow++) {
         allRows.rows[startRow] = rows[i];
 
     }
@@ -558,20 +557,20 @@ int doRead(int sockFd, char *buffer) {
     int len;
     int bytesRead = read(sockFd, &len, sizeof(int));
 
-//    printf("read %d bytes msg length %d\n", bytesRead, len);
+    printf("read %d bytes msg length %d\n", bytesRead, len);
 
     bytesRead = read(sockFd, buffer, len);
 
-//    printf("read %d bytes msg %s\n", bytesRead, buffer);
+    printf("read %d bytes msg %s\n", bytesRead, buffer);
 
     return bytesRead;
 }
 
 void printRows(rowType **rows, int rowCount, int sockFd) {
-
+    int i=0, j=0;
     char outBuffer[2048] = {0};
 
-    for (int i = 0; i < rowCount; i++) {
+    for (i = 0; i < rowCount; i++) {
 
         rowType *row = rows[i];
 
@@ -580,7 +579,7 @@ void printRows(rowType **rows, int rowCount, int sockFd) {
             return;
         }
 
-        for (int j = 0; j < 28; j++) {
+        for (j = 0; j < 28; j++) {
 
             char *vp = row->colEntries[j].value;
             if (j > 0)

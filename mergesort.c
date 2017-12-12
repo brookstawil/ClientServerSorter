@@ -1,15 +1,6 @@
-//
-//  mergesort.c
-//  systprog1
-//
-//  Created by Sam Christian on 9/27/17.
-//  Copyright © 2017 Sam Christian. All rights reserved.
-//
-
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
-#include "sorter.h"
 
 void mergeSort(char** rows, int l, int r);
 void merge(rowType ** rows, int l, int m, int r);
@@ -41,22 +32,22 @@ void mergeSort(char** rows, int l, int r){
 }
 void merge(rowType **row, int left, int mid, int right)
 {
-   
+    int i=0,j=0,k=0;
     int n1 = mid - left + 1;
     int n2 =  right - mid;
     
     rowType *L[n1], *R[n2];
     
     
-    for (int i = 0; i < n1; i++)
+    for (i = 0; i < n1; i++)
         L[i] = row[left + i];
-    for (int j = 0; j < n2; j++)
+    for (j = 0; j < n2; j++)
         R[j] = row[mid + 1+ j];
     
     
-  int  i = 0;
-  int j = 0;
-  int  k = left;
+    i = 0;
+    j = 0;
+    k = left;
     while (i < n1 && j < n2)
     {
        
