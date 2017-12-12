@@ -39,14 +39,14 @@ typedef struct threadArg2{
 //arguments for a thread that watches the connection on some socket and recives sorted files
 typedef struct threadArg3{
     int* fdptr;
-    FILE* csvFileOut;
+    char* pathname;
 } args_receiveAndWriteFileData;
 
 int travdir(const char * input_dir_path, char* column_to_sort, const char * output_dir);
 int createSocket(const char * server, const char * port);
 void goThroughPath(void* margs2);
 args_travelDirectory * createThreadsTraverse(char * output_dir, pthread_t* threadHolder, DIR * directory, char *directory_path);
-args_receiveAndWriteFileData * createThreadsReceiveAndWriteFileData(int *fdptr, FILE* csvFileOut);
+args_receiveAndWriteFileData * createThreadsReceiveAndWriteFileData(int *fdptr, char* pathname);
 args_sendFileData * createThreadsSendFileData(int *fdptr, char* pathname);
 int isAlreadySorted(char *pathname,char *column_to_sort);
 int parseData(char *lines[], int totalLines);

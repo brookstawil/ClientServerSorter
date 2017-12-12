@@ -274,7 +274,7 @@ void *processClient(void *fd) {
             pthread_mutex_lock(&rowLock);
 
             doSort(allRows.rows, sortColIdx, colTypes[sortColIdx].type, allRows.rowCount);
-
+            
             doSend(sockFd, header);
 
             printRows(allRows.rows, allRows.rowCount, sockFd);

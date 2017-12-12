@@ -174,7 +174,6 @@ void* sendFileData(void* args)
     //write the column to sort on and end signal
     char column[30];
     sprintf(column, "%s", global_column_to_sort);
-    printf("column to sort are we doing this correctly %s \n", column);
     doSend(sd, column);
 
 	//Now write the EOC signal
@@ -213,9 +212,8 @@ Idea: We can do a switch statement and have an int that holds 1-4 holding which 
 	char output[MSG_SIZE];
 
 	int sd = *(receiveAndWriteFileDataArgs->fdptr);
-	printf("The socket file descriptor is: %d\n", sd);
+	csvFileOut = fopen(receiveAndWriteFileDataArgs->pathname,"w");
 
-	csvFileOut = receiveAndWriteFileDataArgs->csvFileOut;
 	
 	while(state < 2)
 	{	
@@ -228,12 +226,11 @@ Idea: We can do a switch statement and have an int that holds 1-4 holding which 
         }
 
         printf("line: %d read %d bytes %s\n\n", lineCount, bytesRead, buffer);
-        //doUnTrim(buffer, bytesRead);
 
 		switch(state) {
 			
 			case 0: //Read data from the socket
-				if(bytesRead == 3 && strncmp(buffer, EOD, 3)) {
+				if(bytesRead == 3) {
                   	printf("Got EOD \n");
 					fflush(stdout);
                     state = 2;
@@ -246,13 +243,13 @@ Idea: We can do a switch statement and have an int that holds 1-4 holding which 
 						*/
 						header = calloc(bytesRead+1, sizeof(char *));
 						memcpy(header, buffer, bytesRead);
-						write(csvFileOut, buffer, strlen(buffer));
+						fprintf(csvFileOut, "%s\n", header);
+					} else {
+						char *line = calloc(bytesRead + 1, sizeof(char *));
+						memcpy(line, buffer, bytesRead + 1);
+						fprintf(csvFileOut, "%s\n", line);
 					}
-
-					char *line = calloc(bytesRead + 1, sizeof(char *));
-					memcpy(line, buffer, bytesRead + 1);
-
-					write(csvFileOut, buffer, strlen(buffer));
+					
 					lineCount++;
 				}	
 				break;
@@ -262,6 +259,8 @@ Idea: We can do a switch statement and have an int that holds 1-4 holding which 
 				break;
 		}
 	}
+
+	fclose(csvFileOut);
 
 	pthread_exit(NULL);
 }
@@ -419,65 +418,61 @@ void goThroughPath(void* args)
 			} else {
 				//csvFile = fopen(pathname, "r");
 				printf("We are getting file: %s\n",pathname);
-				if (csvFile != NULL) {
-					//pathname has the full path to the file including extension
-					//directory_path has only the parent directories of the file
+				//pathname has the full path to the file including extension
+				//directory_path has only the parent directories of the file
+
+				/*
+					This is the location where a server connection is made. 
+					The call to createSocket(serverAddress, portNum) will return some file descriptor. 
+					This helper function essentially holds all of the network programming needed to get a socket going.
+					We must obviously check to see if the socket was valid by checking the return value
+				*/
+
+				/*
+					We must transmit:
+						1. The line itself
+						2. Some ending signal once the file is done
+					This is to be implemented in the sendFileData() thread function described above.
+				*/
+
+				/*
+					If we want to accomplish the first extra credit, we would create some semaphore in main, using the -s parameter.
+					And ANYWHERE we call createSocket, we look at this semaphore to check and see whether we have already made a certain number of connections.
+					Most likely we would check the semaphore here and then call this conditional just below.
+					sem_wait() here and then sem_post() after closing the socket with close(sd)
+				*/
+
+				sem_wait(&client_pool);
+
+				int* sd = createSocket( global_serverAddress, global_portNum );
+				printf("Socket File Descriptor is: %d\n", sd);
+				if ( sd == -1 ) {
+					write( 1, message, sprintf( message, "\x1b[1;31mCould not connect to server %s errno %s\x1b[0m\n", global_serverAddress, strerror( errno ) ) );
+					return 1;
+				} else {
+					//With a valid file descriptor we can then split off into another thread which will deal with parsing the file and writing to the socket.
+					printf( "Connected to server %s\n", global_serverAddress);
+					int *fdptr = (int *)malloc(sizeof(int));
+					*fdptr = sd;
+
+					//Once we have the socket file pointer we can create a new thread, call it sendFileData
+					//TODO: create some arg structure for this thread, we need at least the fdptr, what else do we need?
+					pthread_t sendFileData_thread; 
+					pthread_create(&sendFileData_thread, NULL, sendFileData, createThreadsSendFileData(fdptr, pathname));
 
 					/*
-						This is the location where a server connection is made. 
-						The call to createSocket(serverAddress, portNum) will return some file descriptor. 
-						This helper function essentially holds all of the network programming needed to get a socket going.
-						We must obviously check to see if the socket was valid by checking the return value
+						In this implementation the client will join connection threads just after creation. 
+						Meaning that traversing to the next file in the directory will not happen until the file has been sent.
+						Do we need to join or can we just let these threads run?
+						This is going based off the decription that Tjang gave in the assignment page.
 					*/
 
-					/*
-						We must transmit:
-							1. The line itself
-							2. Some ending signal once the file is done
-						This is to be implemented in the sendFileData() thread function described above.
-					*/
+					pthread_join(sendFileData_thread, NULL);
 
-					/*
-						If we want to accomplish the first extra credit, we would create some semaphore in main, using the -s parameter.
-						And ANYWHERE we call createSockte, we look at this semaphore to check and see whether we have already made a certain number of connections.
-						Most likely we would check the semaphore here and then call this conditional just below.
-						sem_wait() here and then sem_post() after closing the socket with close(sd)
-					*/
+					free(fdptr);
+					close(sd);
 
-					sem_wait(&client_pool);
-
-					int* sd;
-					if ( (sd = createSocket( global_serverAddress, global_portNum )) == -1 ) {
-						write( 1, message, sprintf( message, "\x1b[1;31mCould not connect to server %s errno %s\x1b[0m\n", global_serverAddress, strerror( errno ) ) );
-						return 1;
-					} else {
-						//With a valid file descriptor we can then split off into another thread which will deal with parsing the file and writing to the socket.
-						printf( "Connected to server %s\n", global_serverAddress);
-						int *fdptr = (int *)malloc(sizeof(int));
-						*fdptr = sd;
-
-						//Once we have the socket file pointer we can create a new thread, call it sendFileData
-						//TODO: create some arg structure for this thread, we need at least the fdptr, what else do we need?
-						pthread_t sendDumpFileData_thread; // watchConnection_thread;
-						pthread_create(&sendDumpFileData_thread, NULL, sendFileData, createThreadsSendFileData(fdptr, pathname));
-
-						/*
-							In this implementation the client will join connection threads just after creation. 
-							Meaning that traversing to the next file in the directory will not happen until the file has been sent.
-							Do we need to join or can we just let these threads run?
-							This is going based off the decription that Tjang gave in the assignment page.
-						*/
-
-						pthread_join(sendDumpFileData_thread, NULL);
-
-						sendDumpFileData_thread = NULL;
-
-						free(fdptr);
-						close(sd);
-
-						sem_post(&client_pool);
-						return 1; 
-					}
+					sem_post(&client_pool);
 				}
 			}	
 		} else {
@@ -515,6 +510,8 @@ void goThroughPath(void* args)
 
 		sem_wait(&client_pool);
 
+		sleep(5);
+
 		int* sd;
 		if ( (sd = createSocket( global_serverAddress, global_portNum )) == -1 ) {
 			write( 1, message, sprintf( message,  "\x1b[1;31mCould not connect to server %s errno %s\x1b[0m\n", global_serverAddress, strerror( errno ) ) );
@@ -538,16 +535,14 @@ void goThroughPath(void* args)
 			strcat(finalDirectoryPath, global_column_to_sort);
 			strcat(finalDirectoryPath,".csv");
 
-			FILE *csvFileOut = fopen(finalDirectoryPath,"w");
 			int *fdptr = (int *)malloc(sizeof(int));
 			*fdptr = sd;
 			
 			//We now pass this FILE pointer as an argument to the recieveFileData thread
 
 
-			printf("The socket file descriptor is: %d\n",*fdptr);
 			pthread_t receiveAndWriteFileData_thread;
-			pthread_create(&receiveAndWriteFileData_thread, NULL, receiveAndWriteFileData, createThreadsReceiveAndWriteFileData(fdptr, csvFileOut));
+			pthread_create(&receiveAndWriteFileData_thread, NULL, receiveAndWriteFileData, createThreadsReceiveAndWriteFileData(fdptr, finalDirectoryPath));
 
 			pthread_join(receiveAndWriteFileData_thread, NULL);
 			close(sd);
@@ -582,10 +577,10 @@ args_travelDirectory * createThreadsTraverse(char * output_dir, pthread_t* threa
 	return travelDirectoryArgs;
 }
 
-args_receiveAndWriteFileData * createThreadsReceiveAndWriteFileData(int *fdptr, FILE* csvFileOut) {
+args_receiveAndWriteFileData * createThreadsReceiveAndWriteFileData(int *fdptr, char* pathname) {
 	args_receiveAndWriteFileData* receiveAndWriteFileDataArgs = (args_receiveAndWriteFileData*)malloc(sizeof(args_receiveAndWriteFileData));
 	receiveAndWriteFileDataArgs->fdptr = fdptr;
-	receiveAndWriteFileDataArgs->csvFileOut = csvFileOut;
+	receiveAndWriteFileDataArgs->pathname = pathname;
 
 	return receiveAndWriteFileDataArgs;
 }
@@ -616,20 +611,6 @@ int doRead(int sockFd, char *buffer) {
     printf("read %d bytes msg %s\n", bytesRead, buffer);
 
     return bytesRead;
-}
-
-//Helper function that cleans up for newline charcters
-void doUnTrim(char input[], size_t size) {
-    if (input[size-1]=='\0'){
-        input[size-1]='\n';
-		input[size]='\0';
-    }
-	/*
-	//Do we need the /r character?
-    if (input[size-2]=='\r'){
-        input[size-2]='\0';
-    }
-	*/
 }
 
 //If it already contains the phrase -sorted-SOMEVALIDCOLUMN.csv then the file is already sorted
