@@ -124,28 +124,31 @@ void* sendFileData(void* args)
 	char *headerline = NULL;
 	size_t size = 0;
 	int sd = *(sendFileDataArgs->fdptr);
+	FILE* csvFile = fopen(sendFileDataArgs->pathname,"r");
 	lineCount = 0;
 
-	ssize_t headerlineSize = getline(&headerline, &size, sendFileDataArgs->csvFile);
+	ssize_t headerlineSize = getline(&headerline, &size, csvFile);
 
 	/*
 		getline() eats the newline character
 	*/
 
-	//Server is specifying forr the header line
+	//Server is specifying for the header line
 	doSend(sd, headerline);	
 	
 	// Read each line
 	// The existing line will be re-used, or, if necessary,
 	// It will be `free`'d and a new larger buffer will `malloc`'d
 	// I heard that fgets is better so I want to see if this works
-	char line[1024];
+	char *line = NULL;
 
-    while (fgets(line, 1024, sendFileDataArgs->csvFile))
+    while (!feof(csvFile))
     {
     	size_t size = 0;
-    	ssize_t lineSize = getline(&line, &size, sendFileDataArgs->csvFile);
-		printf("Number of bytes of the line: %s\n", lineSize);
+    	ssize_t lineSize = getline(&line, &size, csvFile);
+		printf("Number of bytes of the line: %d\n", lineSize);
+		printf("The line is: %s\n", line);
+
 		if(lineSize != -1){
 			// Discard newline character if it is present,
 			if (lineSize > 0 && line[lineSize-1] == '\n') {
@@ -178,12 +181,13 @@ void* sendFileData(void* args)
 	doSend(sd, EOC);
 
 	close(sd);
+	fclose(csvFile);
 }
 
 //The recieveFileData thread works very much like the watchConnection thread implemented above.
 //However instead of just waiting for a terminating string, the thread also takes data given back from the server.
-void* receiveAndWriteFileData(void* args) {
-	args_receiveAndWriteFileData* receiveAndWriteFileData = args;
+void* receiveAndWriteFileData(void* margs) {
+	args_receiveAndWriteFileData* receiveAndWriteFileDataArgs = margs;
 
 	/*
 		This is essentially the reverse of what the server side is doing.
@@ -200,19 +204,21 @@ void* receiveAndWriteFileData(void* args) {
 Idea: We can do a switch statement and have an int that holds 1-4 holding which data the server is sending through the socket
 			*/
 
-	int sd, i, csvFileOut;
+	int i;
+	FILE* csvFileOut;
 	int bytesRead = 0;
 	int lineCount = 0;
 	int state = 0;
 	char buffer[MSG_SIZE];
 	char output[MSG_SIZE];
 
-	sd = *(receiveAndWriteFileData->fdptr);
-	csvFileOut = receiveAndWriteFileData->csvFileOut;
+	int sd = *(receiveAndWriteFileDataArgs->fdptr);
+	printf("The socket file descriptor is: %d\n", sd);
+
+	csvFileOut = receiveAndWriteFileDataArgs->csvFileOut;
 	
 	while(state < 2)
 	{	
-
         // read the data
         memset(buffer, '\0', sizeof(buffer));
         bytesRead = doRead(sd, buffer);
@@ -222,7 +228,7 @@ Idea: We can do a switch statement and have an int that holds 1-4 holding which 
         }
 
         printf("line: %d read %d bytes %s\n\n", lineCount, bytesRead, buffer);
-        doUnTrim(buffer, bytesRead);
+        //doUnTrim(buffer, bytesRead);
 
 		switch(state) {
 			
@@ -411,7 +417,8 @@ void goThroughPath(void* args)
 				printf("File already sorted: %s\n", d_name);
 				break;
 			} else {
-				csvFile = fopen(pathname, "r");
+				//csvFile = fopen(pathname, "r");
+				printf("We are getting file: %s\n",pathname);
 				if (csvFile != NULL) {
 					//pathname has the full path to the file including extension
 					//directory_path has only the parent directories of the file
@@ -441,7 +448,7 @@ void goThroughPath(void* args)
 
 					int* sd;
 					if ( (sd = createSocket( global_serverAddress, global_portNum )) == -1 ) {
-						write( 1, message, sprintf( message,  "\x1b[1;31mCould not connect to server %s errno %s\x1b[0m\n", global_serverAddress, strerror( errno ) ) );
+						write( 1, message, sprintf( message, "\x1b[1;31mCould not connect to server %s errno %s\x1b[0m\n", global_serverAddress, strerror( errno ) ) );
 						return 1;
 					} else {
 						//With a valid file descriptor we can then split off into another thread which will deal with parsing the file and writing to the socket.
@@ -452,10 +459,7 @@ void goThroughPath(void* args)
 						//Once we have the socket file pointer we can create a new thread, call it sendFileData
 						//TODO: create some arg structure for this thread, we need at least the fdptr, what else do we need?
 						pthread_t sendDumpFileData_thread; // watchConnection_thread;
-						if(pthread_create(&sendDumpFileData_thread, NULL, sendFileData, createThreadsSendFileData(fdptr, csvFile)) != 0){
-							printf( "pthread_create() failed in file %s line %d\n", __FILE__, __LINE__ );
-							return 0;
-						}
+						pthread_create(&sendDumpFileData_thread, NULL, sendFileData, createThreadsSendFileData(fdptr, pathname));
 
 						/*
 							In this implementation the client will join connection threads just after creation. 
@@ -516,6 +520,8 @@ void goThroughPath(void* args)
 			write( 1, message, sprintf( message,  "\x1b[1;31mCould not connect to server %s errno %s\x1b[0m\n", global_serverAddress, strerror( errno ) ) );
 			return 1;
 		} else {
+
+			doSend(sd, DMP);
 			
 			//First we must create a local FILE pointer to write the output to
 			if(*global_output_dir=='.'){
@@ -533,18 +539,18 @@ void goThroughPath(void* args)
 			strcat(finalDirectoryPath,".csv");
 
 			FILE *csvFileOut = fopen(finalDirectoryPath,"w");
+			int *fdptr = (int *)malloc(sizeof(int));
+			*fdptr = sd;
 			
 			//We now pass this FILE pointer as an argument to the recieveFileData thread
 
+
+			printf("The socket file descriptor is: %d\n",*fdptr);
 			pthread_t receiveAndWriteFileData_thread;
-			if(pthread_create(&receiveAndWriteFileData_thread, NULL, receiveAndWriteFileData, createThreadsReceiveAndWriteFileData(sd, csvFileOut) != 0)){
-				printf( "pthread_create() failed in file %s line %d\n", __FILE__, __LINE__ );
-				return 0;
-			}
+			pthread_create(&receiveAndWriteFileData_thread, NULL, receiveAndWriteFileData, createThreadsReceiveAndWriteFileData(fdptr, csvFileOut));
 
 			pthread_join(receiveAndWriteFileData_thread, NULL);
 			close(sd);
-
 		}
 
 		sem_post(&client_pool);
@@ -558,16 +564,16 @@ void goThroughPath(void* args)
 }
 
 //Helper function that sets the arguments for a thread that transmits a given file 
-args_sendFileData * createThreadsSendFileData(int *fdptr, int csvFile) {
-	args_sendFileData* sendFileDataArgs = malloc(sizeof(args_sendFileData));
+args_sendFileData * createThreadsSendFileData(int *fdptr, char* pathname) {
+	args_sendFileData* sendFileDataArgs = (args_sendFileData*)malloc(sizeof(args_sendFileData));
 	sendFileDataArgs->fdptr = fdptr;
-	sendFileDataArgs->csvFile = csvFile;
+	sendFileDataArgs->pathname = pathname;
 
 	return sendFileDataArgs;
 }
 
 args_travelDirectory * createThreadsTraverse(char * output_dir, pthread_t* threadHolder, DIR * directory, char *directory_path){
-	args_travelDirectory* travelDirectoryArgs = malloc(sizeof(args_travelDirectory));
+	args_travelDirectory* travelDirectoryArgs = (args_travelDirectory*)malloc(sizeof(args_travelDirectory));
 	travelDirectoryArgs->output_dir = output_dir;
 	travelDirectoryArgs->threadHolder = threadHolder;
 	travelDirectoryArgs->directory = directory;
@@ -577,7 +583,7 @@ args_travelDirectory * createThreadsTraverse(char * output_dir, pthread_t* threa
 }
 
 args_receiveAndWriteFileData * createThreadsReceiveAndWriteFileData(int *fdptr, FILE* csvFileOut) {
-	args_receiveAndWriteFileData* receiveAndWriteFileDataArgs = malloc(sizeof(args_receiveAndWriteFileData));
+	args_receiveAndWriteFileData* receiveAndWriteFileDataArgs = (args_receiveAndWriteFileData*)malloc(sizeof(args_receiveAndWriteFileData));
 	receiveAndWriteFileDataArgs->fdptr = fdptr;
 	receiveAndWriteFileDataArgs->csvFileOut = csvFileOut;
 
